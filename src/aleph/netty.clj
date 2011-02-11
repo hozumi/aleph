@@ -11,6 +11,7 @@
   (:use
     [clojure.contrib.def :only (defvar- defmacro-)]
     [lamina.core]
+    [aleph.http utils]
     [aleph formats])
   (:require
     [clj-http.client :as client]
@@ -259,7 +260,7 @@
 
 (defn split-url [options]
   (if (:url options)
-    ((client/wrap-url identity) options)
+    ((wrap-url identity) options)
     options))
 
 (def client-thread-pool (Executors/newCachedThreadPool))

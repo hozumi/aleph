@@ -95,8 +95,8 @@
 
 ;;;
 
-(defn wait-for-request [client path]
-  (-> (client {:method :get, :url (str "http://localhost:8080/" path)})
+(defn wait-for-request [client pre-url path]
+  (-> (client {:method :get, :url (str pre-url path)})
     (wait-for-result 1000)
     :body))
 
@@ -117,14 +117,14 @@
   (with-server (create-basic-handler)
     (doseq [[index [path result]] (indexed expected-results)]
       (let [client (http-client {:url "http://localhost:8080"})]
-	(is (= result (wait-for-request client path)))
+	(is (= result (wait-for-request client "http://localhost:8080/" path)))
 	(close-connection client)))))
 
 (deftest multiple-requests
   (with-server (create-basic-handler)
     (let [client (http-client {:url "http://localhost:8080"})]
       (doseq [[index [path result]] (indexed expected-results)]
-	(is (= result (wait-for-request client path))))
+	(is (= result (wait-for-request client "http://localhost:8080/" path))))
       (close-connection client))))
 
 (deftest streaming-response
@@ -153,3 +153,23 @@
 		     (enqueue ch "abc")
 		     (read-channel ch 1000)))]
       (is (= "abc" (wait-for-result result))))))
+
+(defmacro with-secure-server [handler & body]
+  `(do
+     (let [kill-fn# (start-http-server ~handler {:ssl? true,
+						 :ssl-port 8443,
+						 :keystore "test/my.keystore",
+						 :key-password "foobar",
+						 :port 8080,
+						 :auto-transform true})]
+      (try
+	~@body
+	(finally
+	  (kill-fn#))))))
+
+(deftest ssl-request
+  (with-secure-server (create-basic-handler)
+    (doseq [[index [path result]] (indexed expected-results)]
+      (let [client (http-client {:url "https://localhost:8443"})]
+	(is (= result (wait-for-request client "https://localhost:8443/" path)))
+	(close-connection client)))))

@@ -10,7 +10,10 @@
   aleph.http.utils
   (:require
     [clj-http.client :as client]
-    [clojure.string :as str]))
+    [clojure.string :as str])
+  (:import
+   [java.net
+    URL]))
 
 (defn to-str [x]
   (if (keyword? x)
@@ -42,6 +45,21 @@
   [msg]
   (update-in msg [:headers]
     #(zipmap (map str/lower-case (keys %)) (vals %))))
+
+(defn parse-url [url]
+  (let [url-parsed (URL. url)]
+    {:scheme (.getProtocol url-parsed)
+     :server-name (.getHost url-parsed)
+     :server-port (or (client/if-pos (.getPort url-parsed))
+		      (if (= "https" (.getProtocol url-parsed))	443 80))
+     :uri (.getPath url-parsed)
+     :query-string (.getQuery url-parsed)}))
+
+(defn wrap-url [client]
+  (fn [req]
+    (if-let [url (:url req)]
+      (client (-> req (dissoc :url) (merge (parse-url url))))
+      (client req))))
 
 (defn- wrap-request-cookie [request]
   (if-let [cookie (:cookies request)]
@@ -77,7 +95,7 @@
        client/wrap-query-params
        client/wrap-basic-auth
        client/wrap-method
-       client/wrap-url))
+       wrap-url))
    request))
 
 (defn wrap-response [response]

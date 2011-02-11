@@ -36,10 +36,23 @@
     [org.jboss.netty.channel
      Channel
      ExceptionEvent]
+    [org.jboss.netty.handler.ssl
+     SslHandler]
     [java.nio
      ByteBuffer]
     [java.net
-     URI]))
+     URI]
+    [java.security
+     KeyStore
+     Security
+     SecureRandom]
+    [javax.net.ssl
+     KeyManager
+     KeyManagerFactory
+     SSLEngine
+     SSLContext
+     X509TrustManager
+     TrustManager]))
 
 ;;;
 
@@ -109,10 +122,26 @@
 
 ;;;
 
+(defn create-ssl-context []
+  (let [ssl-context (SSLContext/getInstance "TLS")
+	tm (reify X509TrustManager ;;accept all
+		  (checkClientTrusted [_ chain authType] nil)
+		  (checkServerTrusted [_ chain authType] nil)
+		  (getAcceptedIssuers [_] nil))]
+    (.init ssl-context nil (into-array TrustManager [tm]) (SecureRandom.))
+    ssl-context))
+
+(defn create-ssl-engine [client-ssl-context]
+  (doto (.createSSLEngine client-ssl-context)
+    (.setUseClientMode true)))
+
 (defn create-pipeline [client options]
   (let [responses (channel)
-	init? (atom false)
-	pipeline (create-netty-pipeline
+	init? (atom false)]
+    (if (= "https" (:scheme options))
+      (let [client-ssl-context (create-ssl-context)]
+	(create-netty-pipeline
+                   :ssl (SslHandler. (create-ssl-engine client-ssl-context))
 		   :codec (HttpClientCodec.)
 		   :inflater (HttpContentDecompressor.)
 		   :upstream-error (downstream-stage error-stage-handler)
@@ -122,15 +151,25 @@
 				   (read-responses netty-channel options responses client))
 				 (enqueue responses rsp)
 				 nil))
-		   :downstream-error (upstream-stage error-stage-handler))]
-    pipeline))
+		   :downstream-error (upstream-stage error-stage-handler)))
+      (create-netty-pipeline
+		   :codec (HttpClientCodec.)
+		   :inflater (HttpContentDecompressor.)
+		   :upstream-error (downstream-stage error-stage-handler)
+		   :response (message-stage
+			       (fn [netty-channel rsp]
+				 (when (compare-and-set! init? false true)
+				   (read-responses netty-channel options responses client))
+				 (enqueue responses rsp)
+				 nil))
+		   :downstream-error (upstream-stage error-stage-handler)))))
 
 ;;;
 
 (defn- process-options [options]
   (-> options
     split-url
-    (update-in [:server-port] #(or % 80))
+    ;;(update-in [:server-port] #(or % 80))
     (update-in [:keep-alive?] #(or % true))))
 
 (defn- http-connection

@@ -45,13 +45,27 @@
      ChannelBuffer
      ChannelBufferInputStream
      ChannelBuffers]
+    [org.jboss.netty.handler.ssl
+     SslHandler]
     [java.io
      ByteArrayInputStream
      InputStream
      File
+     FileInputStream
      RandomAccessFile]
     [java.net
-     URLConnection]))
+     URLConnection]
+    [java.security
+     KeyStore
+     Security
+     SecureRandom]
+    [javax.net.ssl
+     KeyManager
+     KeyManagerFactory
+     SSLEngine
+     SSLContext
+     X509TrustManager
+     TrustManager]))
 
 ;;;
 
@@ -219,11 +233,43 @@
 	    (enqueue ch request)))
 	nil))))
 
+(defn create-ssl-context [{:keys [keystore key-password]}]
+      (let [ks (KeyStore/getInstance (KeyStore/getDefaultType))
+	    _ (.load ks (FileInputStream. keystore) (.toCharArray key-password))
+	    kmf (KeyManagerFactory/getInstance
+		 (or (Security/getProperty "ssl.KeyManagerFactory.algorithm")
+		     "SunX509"))
+	    _ (.init kmf ks (.toCharArray key-password))
+	    ssl-context (SSLContext/getInstance "TLS")]
+	(.init ssl-context (.getKeyManagers kmf) nil (SecureRandom.))
+	ssl-context))
+
+(defn create-ssl-engine [server-ssl-context]
+  (doto (.createSSLEngine server-ssl-context)
+    (.setUseClientMode false)))
+
 (defn create-pipeline
   "Creates an HTTP pipeline."
   [handler options]
   (let [pipeline ^ChannelPipeline
 	(create-netty-pipeline
+	  :decoder (HttpRequestDecoder.)
+	  :encoder (HttpResponseEncoder.)
+	  :deflater (HttpContentCompressor.)
+	  :upstream-error (upstream-stage error-stage-handler)
+	  :http-request (http-session-handler handler options)
+	  :downstream-error (downstream-stage error-stage-handler))]
+    (when (:websocket options)
+      (.addBefore pipeline "http-request" "websocket" (websocket-handshake-handler handler options)))
+    pipeline))
+
+(defn create-ssl-pipeline
+  "Creates an HTTPS pipeline."
+  [handler options]
+  (let [server-ssl-context (create-ssl-context options)
+	pipeline ^ChannelPipeline
+	(create-netty-pipeline
+	  :ssl (SslHandler. (create-ssl-engine server-ssl-context))
 	  :decoder (HttpRequestDecoder.)
 	  :encoder (HttpResponseEncoder.)
 	  :deflater (HttpContentCompressor.)
@@ -248,9 +294,16 @@
    request is a WebSocket handshake, the channel represents a full duplex socket, which
    communicates via complete (i.e. non-streaming) strings."
   [handler options]
-  (start-server
-    #(create-pipeline handler options)
-    options))
+  (let [https (when (:ssl? options)
+		(start-server
+		 #(create-ssl-pipeline handler options)
+		 (assoc options :port (:ssl-port options))))
+	http (start-server
+	      #(create-pipeline handler options)
+	      options)]
+    (fn []
+      (when https (https))
+      (when http (http)))))
 
 
 
