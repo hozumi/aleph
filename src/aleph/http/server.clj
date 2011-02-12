@@ -60,12 +60,9 @@
      Security
      SecureRandom]
     [javax.net.ssl
-     KeyManager
      KeyManagerFactory
-     SSLEngine
      SSLContext
-     X509TrustManager
-     TrustManager]))
+     TrustManagerFactory]))
 
 ;;;
 
@@ -233,15 +230,27 @@
 	    (enqueue ch request)))
 	nil))))
 
-(defn create-ssl-context [{:keys [keystore key-password]}]
-      (let [ks (KeyStore/getInstance (KeyStore/getDefaultType))
-	    _ (.load ks (FileInputStream. keystore) (.toCharArray key-password))
-	    kmf (KeyManagerFactory/getInstance
-		 (or (Security/getProperty "ssl.KeyManagerFactory.algorithm")
-		     "SunX509"))
-	    _ (.init kmf ks (.toCharArray key-password))
-	    ssl-context (SSLContext/getInstance "TLS")]
-	(.init ssl-context (.getKeyManagers kmf) nil (SecureRandom.))
+(defn load-keystore [keystore key-password]
+  (with-open [fis (FileInputStream. keystore)]
+    (doto (KeyStore/getInstance (KeyStore/getDefaultType))
+      (.load fis (and key-password (.toCharArray key-password))))))
+
+(defn create-ssl-context [{:keys [keystore key-password
+				  truststore trust-password]}]
+  (let [kmf (KeyManagerFactory/getInstance
+	     (or (Security/getProperty "ssl.KeyManagerFactory.algorithm")
+		 "SunX509"))
+	tmf (when truststore
+	      (TrustManagerFactory/getInstance (TrustManagerFactory/getDefaultAlgorithm)))
+	ssl-context (SSLContext/getInstance "TLS")]
+	(.init kmf (load-keystore keystore key-password) (.toCharArray key-password))
+	(when tmf
+	  (.init tmf (load-keystore truststore trust-password)))
+	(.init ssl-context
+	       (.getKeyManagers kmf)
+	       (when tmf
+		    (.getTrustManagers tmf))
+	       (SecureRandom.))
 	ssl-context))
 
 (defn create-ssl-engine [server-ssl-context]
