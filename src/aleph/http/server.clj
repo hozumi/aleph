@@ -237,9 +237,7 @@
 
 (defn create-ssl-context [{:keys [keystore key-password
 				  truststore trust-password]}]
-  (let [kmf (KeyManagerFactory/getInstance
-	     (or (Security/getProperty "ssl.KeyManagerFactory.algorithm")
-		 "SunX509"))
+  (let [kmf (KeyManagerFactory/getInstance (KeyManagerFactory/getDefaultAlgorithm))
 	tmf (when truststore
 	      (TrustManagerFactory/getInstance (TrustManagerFactory/getDefaultAlgorithm)))
 	ssl-context (SSLContext/getInstance "TLS")]
